@@ -1268,3 +1268,41 @@ tbody tr:last-child td {
   gap: 10px;
   font-weight: 600;
 }
+
+button.danger {
+  background: #b4442f;
+  border-color: #b4442f;
+  color: white;
+}
+.dialer {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  width: min(340px, calc(100vw - 32px));
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(20 40 30 / 18%);
+}
+.dialer header {
+  display: grid;
+  gap: 2px;
+}
+.dialer header small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dialer footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dialer-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}

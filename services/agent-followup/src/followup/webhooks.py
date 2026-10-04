@@ -77,6 +77,72 @@ async def connect_lead(db, config, job, call_control_id, event_id, timestamp, pr
     return {"received": True}
 
 
+async def ring_browser(db, config, event_id, payload, timestamp, provider):
+    """Forward an incoming call to a dispatcher's browser dialer.
+
+    The lead's own dispatcher gets it when they have signed in to the dialer;
+    otherwise the first administrator who has. With nobody signed in, the call is
+    left alone and rings out.
+    """
+    caller = payload.get("from")
+    lead = await db.first(
+        "SELECT id,name,agent_id FROM leads WHERE tenant_id=? AND phone=?",
+        config.tenant_id,
+        caller,
+    )
+    admins = [u["id"] for u in config.users if u["role"] == "admin"]
+    candidates = ([lead["agent_id"]] if lead else []) + admins
+    target = None
+    for user_id in candidates:
+        target = await db.first(
+            "SELECT sip_username FROM webrtc_credentials WHERE tenant_id=? AND user_id=?",
+            config.tenant_id,
+            user_id,
+        )
+        if target:
+            break
+    statements = [
+        (
+            "INSERT OR IGNORE INTO provider_events VALUES (?,?,?,?)",
+            event_id,
+            config.tenant_id,
+            "call.initiated",
+            timestamp,
+        )
+    ]
+    if not target:
+        await db.batch(statements)
+        return {"ignored": True}
+    try:
+        caller_config = with_overrides(config, await preferences(db, config))
+        adapter = provider or build_provider(caller_config.provider_config)
+        await adapter.forward_call(
+            payload.get("call_control_id"),
+            f"sip:{target['sip_username']}@sip.telnyx.com",
+            caller,
+        )
+        text = "Incoming call; ringing the browser dialer"
+    except ProviderError:
+        text = "Incoming call could not be forwarded; call them back"
+    if lead:
+        statements.append(
+            (
+                "INSERT INTO activities VALUES (?,?,?,?,?,?,?,?,?)",
+                uid(),
+                config.tenant_id,
+                lead["id"],
+                None,
+                "call",
+                "inbound",
+                text,
+                "received",
+                timestamp,
+            )
+        )
+    await db.batch(statements)
+    return {"received": True}
+
+
 EMAIL_OPT_OUTS = {"email.unsubscribed", "email.complained"}
 
 
@@ -246,6 +312,8 @@ async def receive_webhook(request, db, config, verifier, provider=None):
             ]
         )
         return {"received": True}
+    if event_type == "call.initiated" and payload.get("direction") == "incoming":
+        return await ring_browser(db, config, event_id, payload, timestamp, provider)
     if event_type in EMAIL_OPT_OUTS:
         return await email_opt_out(db, config, event_id, event_type, payload, timestamp)
     provider_id = (

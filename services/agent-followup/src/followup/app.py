@@ -32,6 +32,7 @@ from followup.domain import (
 from followup.models import (
     CallLog,
     ChannelSettings,
+    ConnectInput,
     EmailInput,
     EnrollmentInput,
     ImportInput,
@@ -198,6 +199,7 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
                 "voice_ready": ready(live, "voice"),
                 "email_ready": ready(live, "email"),
                 "bridge_ready": ready(live, "bridge") and bool(user.get("phone")),
+                "browser_ready": ready(live, "browser"),
             }
         )
 
@@ -619,17 +621,29 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
         return await manual(lead_id, "voice", "AI follow-up call", res)
 
     @app.post("/api/leads/{lead_id}/connect")
-    async def connect(lead_id: str, res=Depends(authenticated)):
-        """Click-to-call: ring the agent's own phone, then bridge to the lead once they answer."""
+    async def connect(lead_id: str, body: ConnectInput | None = None, res=Depends(authenticated)):
+        """Click-to-call: ring the agent's phone or browser, then bridge to the lead once they answer."""
         db, config, user = res
+        browser = body is not None and body.via == "browser"
         lead = await get_lead(db, config, user, lead_id)
         if lead["status"] == "opted_out":
             raise HTTPException(409, "Lead opted out")
-        if not user.get("phone"):
+        if browser:
+            login = await db.first(
+                "SELECT sip_username FROM webrtc_credentials WHERE tenant_id=? AND user_id=?",
+                config.tenant_id,
+                user["id"],
+            )
+            if not login:
+                raise HTTPException(409, "Open the browser dialer first")
+            agent = f"sip:{login['sip_username']}@sip.telnyx.com"
+        elif not user.get("phone"):
             raise HTTPException(409, "Your phone number is not configured; ask an administrator")
+        else:
+            agent = user["phone"]
         prefs = await preferences(db, config)
         config = with_overrides(config, prefs)
-        if not ready(config, "bridge"):
+        if not ready(config, "browser" if browser else "bridge"):
             raise HTTPException(409, "Calling is not configured")
         hour = datetime.now(ZoneInfo(lead["timezone"])).hour
         if not prefs["contact_start_hour"] <= hour < prefs["contact_end_hour"]:
@@ -646,7 +660,7 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
         )
         try:
             adapter = provider or build_provider(config.provider_config)
-            result = await adapter.start_bridge(user["phone"], job_id)
+            result = await adapter.start_bridge(agent, job_id)
         except Exception as exc:  # noqa: BLE001 - an unknown transport failure must never be retried blindly
             await db.run(
                 "UPDATE jobs SET status='needs_attention',error=? WHERE id=?",
@@ -669,13 +683,63 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
             config,
             lead_id,
             result.metadata.get("summary")
-            or "Calling your phone; the lead is connected when you answer",
+            or f"Calling your {'browser' if browser else 'phone'}; the lead is connected when you answer",
             "bridge",
             "outbound",
             result.status,
             job_id,
         )
         return envelope({"id": job_id, "status": result.status})
+
+    @app.get("/api/webrtc/token")
+    async def webrtc_token(res=Depends(authenticated)):
+        """Short-lived login for the browser dialer; the Telnyx API key never reaches the browser."""
+        db, config, user = res
+        if config.mode != "demo" and not (
+            config.provider_config.api_key and config.provider_config.credential_connection_id
+        ):
+            raise HTTPException(409, "Browser calling is not configured")
+        client = provider or number_client(config.provider_config)
+        for _attempt in range(2):
+            login = await db.first(
+                "SELECT * FROM webrtc_credentials WHERE tenant_id=? AND user_id=?",
+                config.tenant_id,
+                user["id"],
+            )
+            try:
+                if not login:
+                    created = await client.create_credential(f"{config.tenant_id}-{user['id']}")
+                    await db.run(
+                        "INSERT OR REPLACE INTO webrtc_credentials VALUES (?,?,?,?,?)",
+                        config.tenant_id,
+                        user["id"],
+                        created["id"],
+                        created["sip_username"],
+                        now(),
+                    )
+                    login = {
+                        "credential_id": created["id"],
+                        "sip_username": created["sip_username"],
+                    }
+                token = await client.credential_token(login["credential_id"])
+            except ProviderRejected:
+                # The credential may have been deleted in Telnyx: forget it and make a new one once.
+                await db.run(
+                    "DELETE FROM webrtc_credentials WHERE tenant_id=? AND user_id=?",
+                    config.tenant_id,
+                    user["id"],
+                )
+                continue
+            except ProviderError:
+                break
+            return envelope(
+                {
+                    "login_token": token,
+                    "sip_username": login["sip_username"],
+                    "demo": config.mode == "demo",
+                }
+            )
+        raise HTTPException(502, "Could not sign in to browser calling; try again")
 
     @app.post("/api/leads/{lead_id}/log-call")
     async def log_call_route(lead_id: str, body: CallLog, res=Depends(authenticated)):
@@ -867,8 +931,19 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
             owned = await client.list_numbers()
         except ProviderError:
             raise HTTPException(502, "Could not load numbers from Telnyx; try again") from None
-        selected = with_overrides(config, await preferences(db, config)).provider_config.from_number
-        return envelope({"selected": selected or None, "numbers": owned})
+        prefs = await preferences(db, config)
+        selected = with_overrides(config, prefs).provider_config.from_number
+        used = await db.first(
+            "SELECT COUNT(*) AS n FROM ordered_numbers WHERE tenant_id=?", config.tenant_id
+        )
+        return envelope(
+            {
+                "selected": selected or None,
+                "numbers": owned,
+                "limit": prefs["max_numbers"],
+                "used": used["n"],
+            }
+        )
 
     @app.get("/api/numbers/available")
     async def available_numbers(
@@ -885,6 +960,28 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
     @app.post("/api/numbers/order")
     async def order_number(body: NumberChoice, res=Depends(authenticated)):
         client = await numbers_client(res)
+        db, config, _user = res
+        prefs = await preferences(db, config)
+        # Reserve a slot atomically so two admins buying at once cannot pass the cap.
+        reserved = await db.run(
+            "INSERT OR IGNORE INTO ordered_numbers(tenant_id,phone_number,created_at) SELECT ?,?,? WHERE (SELECT COUNT(*) FROM ordered_numbers WHERE tenant_id=?)<?",
+            config.tenant_id,
+            body.phone_number,
+            now(),
+            config.tenant_id,
+            prefs["max_numbers"],
+        )
+        if not reserved:
+            if await db.first(
+                "SELECT 1 FROM ordered_numbers WHERE tenant_id=? AND phone_number=?",
+                config.tenant_id,
+                body.phone_number,
+            ):
+                raise HTTPException(409, "This number was already ordered")
+            raise HTTPException(
+                409,
+                f"Number limit reached ({prefs['max_numbers']}); raise it in Settings to buy more",
+            )
         try:
             result = await client.order_number(body.phone_number)
         except ProviderAmbiguousError:
@@ -893,9 +990,20 @@ def create_app(database=None, settings=None, verifier=webcrypto_verify, provider
                 502, "Order outcome unknown; check your Telnyx numbers before trying again"
             ) from None
         except ProviderError:
+            await db.run(
+                "DELETE FROM ordered_numbers WHERE tenant_id=? AND phone_number=?",
+                config.tenant_id,
+                body.phone_number,
+            )
             raise HTTPException(
                 409, "Telnyx did not accept the order; nothing was bought"
             ) from None
+        await db.run(
+            "UPDATE ordered_numbers SET order_id=? WHERE tenant_id=? AND phone_number=?",
+            result.provider_id,
+            config.tenant_id,
+            body.phone_number,
+        )
         return envelope({"order_id": result.provider_id, "status": result.status})
 
     @app.post("/api/numbers/select")

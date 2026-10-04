@@ -57,6 +57,8 @@ def ready(config, channel):
         return bool(common and valid_email(p.email_from))
     if channel == "bridge":
         return bool(common and p.connection_id)
+    if channel == "browser":
+        return bool(common and p.connection_id and p.credential_connection_id)
     return bool(
         common
         and (

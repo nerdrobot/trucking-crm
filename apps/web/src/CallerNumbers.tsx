@@ -32,12 +32,25 @@ export function CallerNumbers({ api, demo }: { api: Api; demo: boolean }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [ordered, setOrdered] = useState("");
+  const [quota, setQuota] = useState<{ used: number; limit: number } | null>(
+    null,
+  );
   const load = useCallback(
     () =>
-      api<{ selected: string | null; numbers: Owned[] }>("/numbers")
+      api<{
+        selected: string | null;
+        numbers: Owned[];
+        used?: number;
+        limit?: number;
+      }>("/numbers")
         .then((r) => {
           setOwned(Array.isArray(r?.numbers) ? r.numbers : []);
           setSelected(r?.selected ?? null);
+          setQuota(
+            typeof r?.limit === "number"
+              ? { used: r.used ?? 0, limit: r.limit }
+              : null,
+          );
         })
         .catch((e) => {
           setOwned([]);
@@ -137,6 +150,13 @@ export function CallerNumbers({ api, demo }: { api: Api; demo: boolean }) {
       )}
       <form className="number-search" onSubmit={search}>
         <h3>Find a new number</h3>
+        {quota && (
+          <p className="muted">
+            {quota.used} of {quota.limit} numbers bought through the app
+            {quota.used >= quota.limit &&
+              ". Raise the limit in Settings to buy more."}
+          </p>
+        )}
         <div className="row wrap">
           <Field label="State">
             <select value={state} onChange={(e) => setState(e.target.value)}>
@@ -173,7 +193,12 @@ export function CallerNumbers({ api, demo }: { api: Api; demo: boolean }) {
                 </div>
                 <button
                   className="secondary"
-                  disabled={busy}
+                  disabled={busy || (!!quota && quota.used >= quota.limit)}
+                  title={
+                    quota && quota.used >= quota.limit
+                      ? "Purchase limit reached; raise it in Settings"
+                      : undefined
+                  }
                   onClick={() => setBuying(n)}
                 >
                   <PhoneCall size={15} /> Buy

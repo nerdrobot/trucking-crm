@@ -11,6 +11,7 @@ import {
   PhoneForwarded,
   CalendarPlus,
   Mail,
+  Headset,
 } from "lucide-react";
 import {
   type Detail,
@@ -25,6 +26,7 @@ import {
 import { Empty, Field, Modal, Notice } from "./components";
 import { TaskRow } from "./Workboard";
 import { LogCallForm } from "./Queue";
+import { useDialer } from "./Dialer";
 export function LeadDetail({
   detail,
   sequences,
@@ -49,6 +51,7 @@ export function LeadDetail({
   const [sequenceId, setSequenceId] = useState(sequences[0]?.id || "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const dialer = useDialer();
   const [due, setDue] = useState("");
   const [subject, setSubject] = useState("");
   const { lead, activities, jobs } = detail;
@@ -216,6 +219,25 @@ export function LeadDetail({
               >
                 <PhoneForwarded size={16} /> Call me first
               </button>
+              {dialer && (
+                <button
+                  className="secondary"
+                  disabled={
+                    busy || lead.status === "opted_out" || !dialer.ready
+                  }
+                  title={
+                    dialer.ready ? undefined : "Connecting the browser dialer…"
+                  }
+                  onClick={() => {
+                    setError("");
+                    dialer
+                      .callLead(lead)
+                      .catch((e) => setError((e as Error).message));
+                  }}
+                >
+                  <Headset size={16} /> Call in browser
+                </button>
+              )}
               {lead.status === "paused" ? (
                 <button
                   className="secondary"

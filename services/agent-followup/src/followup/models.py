@@ -162,6 +162,10 @@ class TaskPatch(Input):
     status: Literal["open", "done"]
 
 
+class ConnectInput(Input):
+    via: Literal["phone", "browser"] = "phone"
+
+
 class NumberChoice(Input):
     phone_number: str = Field(pattern=r"^\+[1-9]\d{7,14}$")
 
@@ -198,6 +202,7 @@ class Preferences(Input):
     daily_email_limit: int = Field(default=200, ge=0, le=5000)
     contact_start_hour: int = Field(ge=0, le=23)
     contact_end_hour: int = Field(ge=1, le=24)
+    max_numbers: int = Field(default=2, ge=0, le=20)
 
     @model_validator(mode="after")
     def interval(self):

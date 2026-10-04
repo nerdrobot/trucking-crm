@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowUpRight, ChevronDown, ChevronUp, PhoneCall } from "lucide-react";
+import {
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  Headset,
+  PhoneCall,
+} from "lucide-react";
+import { useDialer } from "./Dialer";
 import {
   carrierLine,
   type Detail,
@@ -131,6 +138,7 @@ export function MyLeads({
   const [history, setHistory] = useState<Detail | null>(null);
   const [logging, setLogging] = useState<Lead | null>(null);
   const [error, setError] = useState("");
+  const dialer = useDialer();
   const load = useCallback(() => {
     const { since, until } = dayBounds();
     return api<QueueData>(
@@ -265,6 +273,21 @@ export function MyLeads({
                   </span>
                   <small className="muted">{ago(lead.last_activity_at)}</small>
                   <span className="actions">
+                    {dialer && (
+                      <button
+                        className="secondary"
+                        aria-label={`Call ${lead.company || lead.name} in browser`}
+                        title="Call in browser"
+                        disabled={lead.status === "opted_out" || !dialer.ready}
+                        onClick={() =>
+                          dialer
+                            .callLead(lead)
+                            .catch((e) => setError((e as Error).message))
+                        }
+                      >
+                        <Headset size={15} />
+                      </button>
+                    )}
                     <button
                       disabled={lead.status === "opted_out"}
                       onClick={() => setLogging(lead)}

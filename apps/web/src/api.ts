@@ -10,6 +10,7 @@ export interface Session {
   voice_ready: boolean;
   email_ready?: boolean;
   bridge_ready?: boolean;
+  browser_ready?: boolean;
 }
 export interface Lead {
   id: string;
@@ -121,6 +122,7 @@ export interface Settings {
   daily_email_limit?: number;
   contact_start_hour: number;
   contact_end_hour: number;
+  max_numbers?: number;
   mode: string;
 }
 export const initialLead = {

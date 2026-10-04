@@ -61,6 +61,7 @@ class Settings:
                 messaging_profile_id=get("TELNYX_MESSAGING_PROFILE_ID"),
                 assistant_id=get("TELNYX_ASSISTANT_ID"),
                 connection_id=get("TELNYX_CONNECTION_ID"),
+                credential_connection_id=get("TELNYX_CREDENTIAL_CONNECTION_ID"),
                 max_call_duration_seconds=int(get("TELNYX_MAX_CALL_SECONDS", "120")),
                 email_from=get("TELNYX_EMAIL_FROM"),
                 email_from_name=get("TELNYX_EMAIL_FROM_NAME"),

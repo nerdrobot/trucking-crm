@@ -27,6 +27,7 @@ SECRET_KEYS = frozenset(
         "TELNYX_MESSAGING_PROFILE_ID",
         "TELNYX_ASSISTANT_ID",
         "TELNYX_CONNECTION_ID",
+        "TELNYX_CREDENTIAL_CONNECTION_ID",
         "TELNYX_MAX_CALL_SECONDS",
         "TELNYX_EMAIL_FROM",
         "TELNYX_EMAIL_FROM_NAME",
@@ -128,6 +129,7 @@ def read_secrets(path, args):
             # A messaging profile is optional: voice-only pilots keep SMS switched off.
             required = SECRET_KEYS - {
                 "TELNYX_MAX_CALL_SECONDS",
+                "TELNYX_CREDENTIAL_CONNECTION_ID",
                 "TELNYX_MESSAGING_PROFILE_ID",
                 "TELNYX_EMAIL_FROM",
                 "TELNYX_EMAIL_FROM_NAME",

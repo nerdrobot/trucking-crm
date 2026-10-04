@@ -103,6 +103,24 @@ export function Settings({
                 }
               />
             </Field>
+            <Field
+              label="Caller numbers the app may buy"
+              hint="Purchases past this limit are refused"
+            >
+              <input
+                type="number"
+                min="0"
+                max="20"
+                required
+                value={draft.max_numbers ?? 2}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    max_numbers: Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
             <Field label="End hour (1–24)">
               <input
                 type="number"

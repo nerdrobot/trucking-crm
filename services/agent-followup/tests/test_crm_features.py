@@ -458,6 +458,7 @@ def test_provider_number_requests():
     assert seen[-1][2] == {
         "phone_numbers": [{"phone_number": "+13214041064"}],
         "connection_id": "connection",
+        "messaging_profile_id": "profile",
     }
     with pytest.raises(ProviderRejected):
         number_client(replace(LIVE, api_key=""))
