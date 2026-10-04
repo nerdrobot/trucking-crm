@@ -127,8 +127,10 @@ def read_secrets(path, args):
                 raise ValueError()
         if args.enable_live_send:
             # A messaging profile is optional: voice-only pilots keep SMS switched off.
+            # The caller number may instead be bought and chosen in the dashboard.
             required = SECRET_KEYS - {
                 "TELNYX_MAX_CALL_SECONDS",
+                "TELNYX_FROM_NUMBER",
                 "TELNYX_CREDENTIAL_CONNECTION_ID",
                 "TELNYX_MESSAGING_PROFILE_ID",
                 "TELNYX_EMAIL_FROM",
@@ -140,7 +142,9 @@ def read_secrets(path, args):
                 raise ValueError()
             if len(base64.b64decode(payload["TELNYX_PUBLIC_KEY"], validate=True)) != 32:
                 raise ValueError()
-            if not re.fullmatch(r"\+[1-9][0-9]{7,14}", payload["TELNYX_FROM_NUMBER"]):
+            if "TELNYX_FROM_NUMBER" in payload and not re.fullmatch(
+                r"\+[1-9][0-9]{7,14}", payload["TELNYX_FROM_NUMBER"]
+            ):
                 raise ValueError()
         if (
             "TELNYX_MAX_CALL_SECONDS" in payload

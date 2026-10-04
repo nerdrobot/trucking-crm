@@ -141,6 +141,10 @@ class DeploymentTests(unittest.TestCase):
             }
             path.write_text(json.dumps(voice_only))
             self.assertEqual(deploy.read_secrets(path, args), voice_only)
+            # The caller number can be chosen in the dashboard instead.
+            no_number = {k: v for k, v in valid.items() if k != "TELNYX_FROM_NUMBER"}
+            path.write_text(json.dumps(no_number))
+            self.assertEqual(deploy.read_secrets(path, args), no_number)
             for boundary in ("30", "300"):
                 payload = {**valid, "TELNYX_MAX_CALL_SECONDS": boundary}
                 path.write_text(json.dumps(payload))
