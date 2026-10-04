@@ -1,0 +1,30 @@
+[project]
+name = "agent-followup"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "tzdata>=2026.4",
+]
+
+[dependency-groups]
+dev = ["cryptography>=50.0.1", "workers-py", "workers-runtime-sdk", "pytest", "pytest-cov", "httpx", "ruff", "uvicorn"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--cov --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["followup"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]

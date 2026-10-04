@@ -1,0 +1,5 @@
+.local-smoke.json
+.dev.vars
+.venv-workers/
+python_modules/
+.wrangler/

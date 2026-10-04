@@ -1,0 +1,112 @@
+name: Deploy pilot
+
+# Every push to main (including merged pull requests) is tested again and then
+# deployed to Cloudflare with scripts/deploy.py. Configuration lives in the
+# `production` environment; see infra/README.md ("Automatic deployment").
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never run two deployments at once, and never cancel one halfway through.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: services/agent-followup/uv.lock
+      - name: Backend tests
+        working-directory: services/agent-followup
+        run: |
+          uv sync --locked --all-groups
+          uv run ruff check .
+          uv run pytest
+      - name: Deployment script tests
+        run: python3 -m unittest tests/test_deploy.py
+      - name: Frontend checks
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
+  deploy:
+    needs: verify
+    # Skipped (not failed) until the production environment is configured.
+    if: vars.CLOUDFLARE_ACCOUNT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.FRONTEND_ORIGIN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: services/agent-followup/uv.lock
+      - name: Install dependencies
+        run: |
+          (cd services/agent-followup && uv sync --locked --all-groups)
+          (cd apps/web && npm ci)
+      - name: Write deployment secrets
+        env:
+          PILOT_SECRETS_JSON: ${{ secrets.PILOT_SECRETS_JSON }}
+        run: |
+          umask 077
+          printf '%s' "$PILOT_SECRETS_JSON" > "$RUNNER_TEMP/pilot-secrets.json"
+      - name: Deploy backend and dashboard
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          WORKER_NAME: ${{ vars.WORKER_NAME }}
+          PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}
+          API_ORIGIN: ${{ vars.API_ORIGIN }}
+          FRONTEND_ORIGIN: ${{ vars.FRONTEND_ORIGIN }}
+          PILOT_MODE: ${{ vars.PILOT_MODE || 'demo' }}
+          ENABLE_LIVE_SEND: ${{ vars.ENABLE_LIVE_SEND }}
+        run: |
+          args=(
+            --account-id "$ACCOUNT_ID"
+            --database-id "$DATABASE_ID"
+            --worker-name "$WORKER_NAME"
+            --pages-project "$PAGES_PROJECT"
+            --api-origin "$API_ORIGIN"
+            --frontend-origin "$FRONTEND_ORIGIN"
+            --secrets-file "$RUNNER_TEMP/pilot-secrets.json"
+            --mode "$PILOT_MODE"
+          )
+          if [ "$ENABLE_LIVE_SEND" = "true" ]; then args+=(--enable-live-send); fi
+          python3 scripts/deploy.py "${args[@]}" --apply
+      - name: Remove deployment secrets
+        if: always()
+        run: rm -f "$RUNNER_TEMP/pilot-secrets.json"
+      - name: Check the live API
+        env:
+          API_ORIGIN: ${{ vars.API_ORIGIN }}
+        run: curl --fail --silent --show-error --retry 10 --retry-delay 6 --retry-all-errors "$API_ORIGIN/health"

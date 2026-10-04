@@ -1,0 +1,69 @@
+name: Follow-up backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/agent-followup/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'services/agent-followup/**'
+      - '.github/workflows/backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/agent-followup
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: services/agent-followup/uv.lock
+      - run: uv sync --locked --all-groups
+      - run: uv run ruff check .
+      - run: uv run pytest
+      - name: Prepare local Worker test
+        run: |
+          uv run python scripts/smoke.py prepare
+          uv run pywrangler d1 migrations apply DB --local
+      - name: Verify FastAPI and D1 in the local Worker runtime
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          uv run pywrangler dev --ip 127.0.0.1 --port 8787 --test-scheduled > /tmp/followup-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:8787/health > /dev/null; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then
+              echo 'Local Worker exited before becoming ready.'
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            echo 'Local Worker did not become ready within 240 seconds.'
+            exit 1
+          fi
+          uv run python scripts/smoke.py run
